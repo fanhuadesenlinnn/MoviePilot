@@ -439,6 +439,12 @@ canonical `app.db.oper.workflow.WorkflowOper` 只提供显式 Session 的 query/
 API 中允许丢失或可重建的进程内任务必须登记到 `app/runtime/tasks.py`；登记器先于其他
 运行资源启动，并在资源释放前停止接收、取消和有限等待。需要崩溃恢复的 E2/E3 副作用仍应
 进入 Outbox 或持久任务表，不能把 TaskRegistry 当成 durable queue。
+浏览器空闲回收由 `BrowserSessionHelper` 持有，normal/safe 模式均在模块服务和 TaskRegistry
+启动后登记一个扫描任务；每 60 秒向已有会话线程投递条件关闭，不创建额外线程池或浏览器。
+空闲期从末次操作结束起计算 15 分钟，排队和在途操作受同一准入锁保护；关闭前复核会话、
+执行器、owner 和时间，旧关闭不能撤销同名新实例。TaskRegistry 取消扫描后等待已投递关闭，
+超时沿用登记器的 fail-fast 语义；最终全关仍在模块关闭阶段，不提前释放消费者资源。
+启动性能清单仅新增该组件：normal 33 → 34、safe 21 → 22，历史计时样本与三秒上限不变。
 Runtime 关闭后不可逆；完整应用生命周期的再次启动必须由新进程承载，不能在同一解释器中重建局部资源域。
 插件需要浏览器时使用 `app.sdk.browser`，由宿主浏览器适配器协调资源，不直接依赖资源实现。
 插件需要飞书事件长连接时使用 `app.sdk.feishu.FeishuLongConnection`，与宿主飞书模块共用同一传输实现，不再各自依赖 lark-oapi。
@@ -1336,7 +1342,7 @@ driven workflow registration.
 | `app/application/server/report.py` | Server reporting use cases over injected local readers and transport callbacks |
 | `app/application/server/share.py` | Server sharing use cases over injected repositories and transport callbacks |
 | `app/domain/plugin.py` | Pure local-source, generation-compatibility and Release-install-plan rules |
-| `app/domain/chat.py` | 会话展示快照的纯选择状态合并规则；保留首次选择，不读取交互管理器或持久化服务 |
+| `app/domain/chat.py` | 会话展示快照的纯时间戳兼容与选择状态合并规则；保留首次选择及回执时间，不读取交互管理器或持久化服务 |
 | `app/adapters/external/plugin/client.py` | `PluginMarketTransport`, the unique market transport, index/Release and local-candidate owner |
 | `app/adapters/system/plugin/package.py` | `PluginPackageManager`, the unique install, checkpoint, backup, restore and physical-delete owner |
 | `app/adapters/system/plugin/dependency.py` | `PluginDependencyInstaller`, enabled-source dependency inspection and constrained per-plugin recovery owner; `async_install` has two completion-owned worker boundaries for request preparation and fallback planning, while package subprocess cancellation remains with `PluginRuntimeHealth` |
